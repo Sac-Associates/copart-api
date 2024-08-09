@@ -1,0 +1,136 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Copart Application
+
+Globals:
+  Function:
+    Timeout: 10
+
+Resources:
+
+  # S3 Bucket for CSV storage
+  CopartCsvBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: copart-csv-storage
+
+  # Lambda Function to Download and Parse CSV
+  DownloadParseCsvFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.lambda_handler
+      Runtime: python3.9
+      CodeUri: src/download_parse_csv/
+      Environment:
+        Variables:
+          S3_BUCKET: !Ref CopartCsvBucket
+      Events:
+        ScheduledEvent:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 hour)
+
+  # Lambda Function to Set User Criteria
+  SetCriteriaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.lambda_handler
+      Runtime: python3.9
+      CodeUri: src/set_criteria/
+      Environment:
+        Variables:
+          TABLE_NAME: UserCriteriaTable
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Path: /setCriteria
+            Method: post
+
+  # Lambda Function to Get Vehicles Based on Criteria
+  GetVehiclesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.lambda_handler
+      Runtime: python3.9
+      CodeUri: src/get_vehicles/
+      Environment:
+        Variables:
+          TABLE_NAME: VehicleTable
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Path: /getVehicles
+            Method: get
+
+  # DynamoDB Table for User Criteria
+  UserCriteriaTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: user_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: user_id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  # DynamoDB Table for Vehicles
+  VehicleTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: vehicle_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: vehicle_id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  # S3 Bucket for Frontend Hosting
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: copart-frontend-storage
+
+  # CloudFront Distribution for Frontend
+  FrontendDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Origins:
+          - DomainName: !GetAtt FrontendBucket.DomainName
+            Id: FrontendOrigin
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+        Enabled: true
+        DefaultCacheBehavior:
+          TargetOriginId: FrontendOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+          CachedMethods:
+            - GET
+            - HEAD
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+
+Outputs:
+  ApiUrl:
+    Description: "API Gateway endpoint URL for Prod environment"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/"
+  CsvBucketName:
+    Description: "S3 Bucket for storing CSV files"
+    Value: !Ref CopartCsvBucket
+  FrontendBucketName:
+    Description: "S3 Bucket for hosting the frontend"
+    Value: !Ref FrontendBucket
+  FrontendDistributionUrl:
+    Description: "CloudFront URL for the frontend"
+    Value: !GetAtt FrontendDistribution.DomainName
